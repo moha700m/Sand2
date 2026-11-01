@@ -88,7 +88,7 @@ jobs:
           path: |
             ThirdParty/llama.cpp/build-apple/llama.xcframework
             ThirdParty/whisper.cpp/build-apple/whisper.xcframework
-          key: native-fw-${{ runner.os }}-${{ hashFiles('ThirdParty/llama.cpp/.git', 'ThirdParty/whisper.cpp/.git', 'Patches/**', 'scripts/build_native_frameworks.sh', 'scripts/native/**') }}
+          key: native-fw-v2-${{ runner.os }}-${{ hashFiles('Patches/**', 'scripts/build_native_frameworks.sh', 'scripts/native/**', '.gitmodules') }}
 
       - name: Build native llama.cpp XCFramework
         if: steps.cache-native.outputs.cache-hit != 'true'
@@ -104,6 +104,11 @@ jobs:
           git submodule update --init --recursive
           test -d ThirdParty/llama.cpp/build-apple/llama.xcframework
           ls -la ThirdParty/llama.cpp/build-apple/llama.xcframework
+
+      - name: Scrub accidental probe sources
+        run: |
+          set -euo pipefail
+          find IOSLocalLLM -name '.cursor*' -type f -print -delete || true
 
       - name: Generate Xcode project and CocoaPods workspace
         run: |
