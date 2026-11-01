@@ -1,1 +1,1 @@
-base64://tmp/FastVLM.patched.b64
+FULL_CONTENT_PLACEHOLDER
