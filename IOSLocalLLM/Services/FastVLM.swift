@@ -1,1 +1,1 @@
-{{READ_FILE:/tmp/FastVLM.patched.swift}}
+PLACEHOLDER
