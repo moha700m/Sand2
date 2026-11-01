@@ -1,1 +1,1 @@
-PLACEHOLDER_TEST_REMOVE
+@file:/tmp/FastVLM.patched.swift
