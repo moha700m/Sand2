@@ -1,1 +1,1 @@
-DUMMY
+@file:/tmp/FastVLM.patched.swift
