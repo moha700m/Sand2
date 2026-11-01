@@ -1,0 +1,416 @@
+name: OnDeviceLAS
+options:
+  bundleIdPrefix: com.moha700m.sand2
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "26.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+packages:
+  # MLX runtime stack. The app's source targets the mlx-swift-lm 3.x API
+  # (actor type/processor registries, config creators receive Data not URL,
+  # loadContainer(from:configuration:)) and imports MLXLMTransformers — the
+  # tokenizer/Hub bridge that mlx-swift-lm 3.x externalized into the
+  # DePasqualeOrg/swift-transformers-mlx fork. The OLD ml-explore/mlx-swift-examples
+  # package does NOT provide these and must not be used here.
+  #   • mlx-swift-lm 3.31.4 → MLXLLM / MLXLMCommon / MLXVLM / MLXEmbedders (iOS 17)
+  #   • swift-transformers-mlx 0.2.0 → MLXLMTransformers (pulls swift-transformers
+  #     1.3.x + swift-huggingface; depends on mlx-swift-lm 3.31.3+)
+  #   • PrismML mlx-swift at the pinned revision below → upstream-compatible MLX plus the
+  #     1-bit affine kernels required by the Bonsai presets (iOS 17)
+  # Everything is iOS 17; the app target is iOS 18, so there is no platform
+  # conflict at `archive`. Move these in lockstep.
+  # Do not replace this fork with upstream while the catalog contains
+  # `Bonsai-*-mlx-1bit`. Upstream MLX rejects bits=1 in mlx_quantize; its
+  # Swift error trampoline turns that validation error into a fatal SIGTRAP.
+  mlx-swift:
+    url: https://github.com/PrismML-Eng/mlx-swift.git
+    revision: e40e0a57a6f7ad08dc3fd87ad598a7aa6407d230
+  mlx-swift-lm:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    from: "3.31.4"
+  swift-transformers-mlx:
+    url: https://github.com/DePasqualeOrg/swift-transformers-mlx
+    from: "0.2.0"
+  coreai-models:
+    # Local pin with OnDeviceLAS patch: removes FoundationModels
+    # `.updateUsage` so the Core AI app launches on iOS 27 betas whose
+    # FoundationModels binary does not export that symbol yet.
+    path: Packages/coreai-models
+  # Upstream (re-enable when OS/SDK symbols match):
+  # url: https://github.com/apple/coreai-models.git
+  # revision: 938d0b8943b942ce66438b94ab017c5631d1aef4
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+    CLANG_ENABLE_MODULES: YES
+    # High-confidence C/C++/Objective-C diagnostics. These apply to the
+    # bridging-header boundary and any future native sources added to targets.
+    GCC_WARN_ABOUT_RETURN_TYPE: YES_ERROR
+    GCC_WARN_UNINITIALIZED_AUTOS: YES_AGGRESSIVE
+    CLANG_WARN_IMPLICIT_FALLTHROUGH: YES
+    GCC_WARN_64_TO_32_BIT_CONVERSION: YES
+    GCC_TREAT_IMPLICIT_FUNCTION_DECLARATIONS_AS_ERRORS: YES
+    CLANG_ANALYZER_SECURITY_FLOATLOOPCOUNTER: YES
+    CLANG_ANALYZER_SECURITY_INSECUREAPI_RAND: YES
+    CLANG_ANALYZER_SECURITY_INSECUREAPI_STRCPY: YES
+    SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+  configs:
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      VALIDATE_PRODUCT: YES
+
+targets:
+  OnDeviceLAS:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: IOSLocalLLM
+        excludes:
+          - "**/*.mlmodelc"
+          - "**/FastVLM-0.5B-fp16/**"
+          - "**/yolo11n.mlpackage"
+          - "**/*.png"
+          - "**/*.PNG"
+          - "**/*.jpg"
+          - "**/*.JPG"
+          - "**/*.jpeg"
+          - "**/*.JPEG"
+          - "**/*.md"
+          # Model metadata and weights may exist locally for development, but
+          # they must never be discovered as bundle resources by XcodeGen.
+          - "**/*.json"
+          - "**/*.txt"
+          - "**/*.bin"
+          - "**/*.gguf"
+          - "**/*.safetensors"
+          - "**/*.mlpackage"
+          - "**/*.onnx"
+          - "**/*.npz"
+          # Mac installer assets are never part of the server-only bundle.
+          - "**/*.pkg"
+          - "Resources/BundledVLM/**"
+          - "Resources/BundledVoiceModels/**"
+          # This product has one screen: the authenticated local API server.
+          # Keep the inference and safety services above it, but do not compile
+          # the assistant, lens, voice, settings, or bridge UI surfaces.
+          - "**/Views/**"
+          - "**/ViewModels/**"
+          - "**/TipsManager.swift"
+          - "**/Services/Intents/**"
+          # This product exposes the local OpenAI/Anthropic/Ollama listener
+          # only. The paired-Mac bridge, QR/TLS pairing, silent-push wakeup,
+          # and app-tab handoff runtime are deliberately not compiled into
+          # the server-only target.
+          - "Models/AppBridge.swift"
+          - "Services/LifecycleController.swift"
+          - "Services/WipeAllDataService.swift"
+          - "Services/Bridge/Agent/**"
+          - "Services/Bridge/BonjourPublisher.swift"
+          - "Services/Bridge/BridgeIdentity.swift"
+          - "Services/Bridge/BridgeManager.swift"
+          - "Services/Bridge/BridgePairingStore.swift"
+          - "Services/Bridge/BridgeServer.swift"
+          - "Services/Bridge/BridgeWakeup.swift"
+          - "Services/Bridge/DEREncoder.swift"
+          # The server target has no speech, TTS, or voice-conversation path.
+          - "**/Services/Voice/**"
+          - "**/VoiceConversationService.swift"
+          - "**/SpeechDictationService.swift"
+          - "**/AudioTranscriptionService.swift"
+          - "**/VoiceCatalogStore.swift"
+          - "**/VoiceProfile.swift"
+          - "**/VoiceSettingsStore.swift"
+          - "**/Resources/VoiceModelCatalog.json"
+          - "**/Resources/Voice/**"
+          # Camera / lens / OCR / code-mode are assistant surfaces. Keep
+          # inference + residency, but do not ship the live-camera stack.
+          - "**/CameraService.swift"
+          - "**/AnalysisService.swift"
+          - "**/LiveOCRService.swift"
+          - "**/OCRService.swift"
+          - "**/TextRegionDetector.swift"
+          - "**/LensFramePreparer.swift"
+          - "**/CodeModeController.swift"
+          # Core AI types live in the CoreAIOnDeviceLAS target.
+          - "**/CoreAILanguageModelService.swift"
+          - "**/CoreAIVisionService.swift"
+          - "**/CoreAIModelStore.swift"
+      # The server homepage uses this one reusable SwiftUI status component;
+      # the remainder of the legacy Views directory stays excluded above.
+      - path: IOSLocalLLM/Views/LiveParserBar.swift
+      # Sideload-proof App Documents import sheet (the picker-free fallback
+      # for ForgeSign-class resigns that break open-in-place folder picking).
+      - path: IOSLocalLLM/Views/LocalModelDocumentsImportSheet.swift
+      # Transparent Liquid Glass primitives (parity optical layer).
+      - path: IOSLocalLLM/Views/GlassEffects.swift
+      - path: IOSLocalLLM/Views/LiquidPinkBackdrop.swift
+    resources:
+      - path: IOSLocalLLM/PrivacyInfo.xcprivacy
+    info:
+      path: IOSLocalLLM/Info.plist
+      properties:
+        CFBundleDisplayName: "Sand2"
+        # Source of truth for both targets' marketing version. xcodegen
+        # writes these into the generated Info.plist files on every run,
+        # so hand-edits to those plists get reverted next regen — always
+        # bump HERE first, then `xcodegen` to propagate.
+        CFBundleShortVersionString: "3.2.6"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # Standard HTTPS only — answers the ASC export-compliance question
+        # automatically so review submission doesn't stall on it.
+        ITSAppUsesNonExemptEncryption: false
+        NSLocalNetworkUsageDescription: "On Device: LAS exposes your selected on-device language model to trusted computers on your local network."
+        UIRequiresFullScreen: true
+        UIStatusBarStyle: UIStatusBarStyleDarkContent
+        UIViewControllerBasedStatusBarAppearance: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UILaunchScreen:
+          UIColorName: ""
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        # Make downloaded/imported models visible in Files for the server
+        # operator. The API itself remains the only in-app feature.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.moha700m.sand2
+        INFOPLIST_FILE: IOSLocalLLM/Info.plist
+        CODE_SIGN_ENTITLEMENTS: IOSLocalLLM/IOSLocalLLM.entitlements
+        CODE_SIGN_STYLE: Automatic
+        VERSIONING_SYSTEM: apple-generic
+        CURRENT_PROJECT_VERSION: "146"
+        # iPhone-only server surface.
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
+        # Tests need @testable in Debug. Release archives must not ship
+        # testability (dead-code stripping + a smaller attack surface).
+        # Scheme test action is Debug-only; do not add tests to `run`.
+        ENABLE_TESTABILITY: NO
+        # ── llama.cpp + mtmd integration ────────────────────────
+        # Bridging header exposes llama.h / mtmd.h / mtmd-helper.h
+        # to Swift via LlamaCppBridge.swift.
+        SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/IOSLocalLLM/Services/LlamaCpp/IOSLocalLLM-Bridging-Header.h"
+        # Source-tree header paths keep bridging-header dependency scanning
+        # deterministic. The compiled llama, ggml, and mtmd implementations
+        # all come from the single llama.xcframework below.
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/ThirdParty/llama.cpp/tools/mtmd"
+          - "$(SRCROOT)/ThirdParty/llama.cpp/include"
+          - "$(SRCROOT)/ThirdParty/llama.cpp/ggml/include"
+      configs:
+        Debug:
+          ENABLE_TESTABILITY: YES
+    dependencies:
+      - package: mlx-swift-lm
+        product: MLXLLM
+      - package: mlx-swift-lm
+        product: MLXLMCommon
+      - package: mlx-swift-lm
+        product: MLXVLM
+      # Tokenizer/Hub bridge (import MLXLMTransformers) — externalized out of
+      # mlx-swift-lm 3.x into the swift-transformers-mlx fork.
+      - package: swift-transformers-mlx
+        product: MLXLMTransformers
+      # StableDiffusion is now VENDORED under IOSLocalLLM/Vendor/StableDiffusion
+      # (patched so the app can construct configurations for additional
+      # SD/SDXL models). The SPM product is intentionally NOT linked to avoid
+      # duplicate type definitions.
+      - package: mlx-swift
+        product: MLX
+      - package: mlx-swift
+        product: MLXNN
+      - package: mlx-swift
+        product: MLXRandom
+      # Imported directly by FastVLM.swift. Declared explicitly so it doesn't
+      # rely on being pulled in transitively (which fails at `archive`).
+      - package: mlx-swift
+        product: MLXFast
+      # llama.cpp prebuilt xcframework — built by
+      # scripts/build_native_frameworks.sh. Provides
+      # libllama + libggml with Metal backend.
+      - framework: ThirdParty/llama.cpp/build-apple/llama.xcframework
+        embed: true
+  OnDeviceLASTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: IOSLocalLLMTests/LocalAPIServerTests.swift
+      - path: IOSLocalLLMTests/DeviceTierAdvisorTests.swift
+      - path: IOSLocalLLMTests/LASAppIdentityTests.swift
+      - path: IOSLocalLLMTests/Int64FormattedBytesTests.swift
+      - path: IOSLocalLLMTests/URLSafetyValidatorTests.swift
+    dependencies:
+      - target: OnDeviceLAS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.moha700m.sand2.tests
+        INFOPLIST_FILE: ""   # auto-generate
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_EMIT_LOC_STRINGS: NO
+        # Clear the bridging header — tests only test Swift code.
+        SWIFT_OBJC_BRIDGING_HEADER: ""
+        SWIFT_INSTALL_OBJC_HEADER: NO
+        # Need header search paths for the main target's bridging header
+        # dependency scanning (llama.h, mtmd.h, etc.).
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/ThirdParty/llama.cpp/tools/mtmd"
+          - "$(SRCROOT)/ThirdParty/llama.cpp/include"
+          - "$(SRCROOT)/ThirdParty/llama.cpp/ggml/include"
+          - "$(SRCROOT)/ThirdParty/whisper.cpp/include"
+
+  # Independent iOS 27/Core AI server product. This deliberately owns a
+  # separate bundle and settings namespace while reusing the reference
+  # dashboard/API source tree. CORE_AI_SERVER_APP switches only the inference
+  # boundary; the existing OnDeviceLAS target remains unchanged.
+  CoreAIOnDeviceLAS:
+    type: application
+    platform: iOS
+    deploymentTarget: "27.0"
+    sources:
+      # Explicit source ownership is intentional. The Core AI target does
+      # not compile the reference app's MLX, llama.cpp, voice, camera, lens,
+      # speech, or Mac-bridge implementation files.
+      - path: CoreAIOnDeviceLAS
+        excludes:
+          - "**/*.plist"
+          - "**/*.xcprivacy"
+          - "**/*.entitlements"
+      - path: IOSLocalLLM/Models/ChatMessage.swift
+      - path: IOSLocalLLM/Models/TokenLogprob.swift
+      - path: IOSLocalLLM/Services/Bridge/LocalAPIServer.swift
+      - path: IOSLocalLLM/Services/Bridge/LocalAPITokenBudget.swift
+      - path: IOSLocalLLM/Services/Bridge/LocalAPIHistorySelector.swift
+      - path: IOSLocalLLM/Services/Bridge/AiderConfigurationExporter.swift
+      - path: IOSLocalLLM/Services/Bridge/RemoteInferenceGate.swift
+      - path: IOSLocalLLM/Services/CoreAIModelStore.swift
+      - path: IOSLocalLLM/Services/CoreAIConversationPlanner.swift
+      - path: IOSLocalLLM/Services/CoreAILanguageModelService.swift
+      - path: IOSLocalLLM/Services/CoreAIVisionService.swift
+      - path: IOSLocalLLM/Services/RuntimeLogCenter.swift
+      - path: IOSLocalLLM/Services/Web/KeychainStore.swift
+      - path: IOSLocalLLM/Services/HFTokenStore.swift
+      - path: IOSLocalLLM/Services/HFSearchService.swift
+      - path: IOSLocalLLM/Services/BackgroundDownloadCoordinator.swift
+      - path: IOSLocalLLM/HFTokenSettingsView.swift
+      - path: IOSLocalLLM/Views/CoreAIModelManagementView.swift
+      - path: IOSLocalLLM/Services/LocalModelDocumentPickerSession.swift
+      - path: IOSLocalLLM/Services/LASAppIdentity.swift
+      - path: IOSLocalLLM/Views/LocalModelDocumentsImportSheet.swift
+      - path: IOSLocalLLM/Views/GlassEffects.swift
+      - path: IOSLocalLLM/Views/LiquidPinkBackdrop.swift
+      - path: IOSLocalLLM/Models/KoduTheme.swift
+      - path: IOSLocalLLM/LASDesignSystem.swift
+      - path: IOSLocalLLM/LASTheme.swift
+      - path: IOSLocalLLM/Views/LiveParserBar.swift
+      - path: IOSLocalLLM/Services/ToastCenter.swift
+      - path: IOSLocalLLM/RuntimeTerminalView.swift
+      # On-device debugger (crash breadcrumbs, load telemetry, admission
+      # snapshot, live events, export). The diagnostics stack and debugger
+      # view are shared with OnDeviceLAS; the CoreAI editions of the memory
+      # and safety services live in CoreAIOnDeviceLAS/CoreAIDebuggerServices.
+      - path: IOSLocalLLM/OnDeviceDebuggerView.swift
+      - path: IOSLocalLLM/Services/Diagnostics/Diagnostics.swift
+      - path: IOSLocalLLM/Services/Diagnostics/CrashReporter.swift
+      - path: IOSLocalLLM/Services/Diagnostics/SystemSnapshot.swift
+      - path: IOSLocalLLM/Models/Int64+FormattedBytes.swift
+    resources:
+      - path: CoreAIOnDeviceLAS/PrivacyInfo.xcprivacy
+      - path: CoreAIOnDeviceLAS/Assets.xcassets
+    info:
+      path: CoreAIOnDeviceLAS/Info.plist
+      properties:
+        CFBundleDisplayName: "Core AI: LAS"
+        CFBundleShortVersionString: "3.2.6"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        ITSAppUsesNonExemptEncryption: false
+        NSLocalNetworkUsageDescription: "Core AI: LAS exposes your selected on-device Core AI model to trusted computers on your local network."
+        UIRequiresFullScreen: true
+        UIStatusBarStyle: UIStatusBarStyleDarkContent
+        UIViewControllerBasedStatusBarAppearance: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UILaunchScreen:
+          UIColorName: ""
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mesutcydev.coreaiondevicelas
+        INFOPLIST_FILE: CoreAIOnDeviceLAS/Info.plist
+        CODE_SIGN_ENTITLEMENTS: CoreAIOnDeviceLAS/CoreAIOnDeviceLAS.entitlements
+        CODE_SIGN_STYLE: Automatic
+        VERSIONING_SYSTEM: apple-generic
+        CURRENT_PROJECT_VERSION: "138"
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
+        ENABLE_TESTABILITY: NO
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) CORE_AI_SERVER_APP"
+      configs:
+        Debug:
+          ENABLE_TESTABILITY: YES
+    dependencies:
+      - package: coreai-models
+        product: CoreAILM
+      - package: coreai-models
+        product: CoreAISegmentation
+
+  CoreAIOnDeviceLASTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "27.0"
+    sources:
+      - path: IOSLocalLLMTests/CoreAIModelStoreTests.swift
+    dependencies:
+      - target: CoreAIOnDeviceLAS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mesutcydev.coreaiondevicelas.tests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_EMIT_LOC_STRINGS: NO
+        SWIFT_OBJC_BRIDGING_HEADER: ""
+
+schemes:
+  OnDeviceLAS:
+    build:
+      targets:
+        OnDeviceLAS: all
+        OnDeviceLASTests: [test]
+    test:
+      config: Debug
+      targets:
+        - OnDeviceLASTests
+    archive:
+      config: Release
+
+  CoreAIOnDeviceLAS:
+    build:
+      targets:
+        CoreAIOnDeviceLAS: all
+    test:
+      config: Debug
+      targets:
+        - CoreAIOnDeviceLASTests
+    archive:
+      config: Release
