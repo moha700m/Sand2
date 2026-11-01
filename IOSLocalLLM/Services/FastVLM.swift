@@ -1,1 +1,1 @@
-@file:/tmp/gh_create_args.json
+base64://tmp/FastVLM.patched.b64
