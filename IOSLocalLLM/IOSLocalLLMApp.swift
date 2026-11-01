@@ -9,22 +9,17 @@ struct OnDeviceLASApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ZStack {
-                // Shared ambient sample field so clear Liquid Glass has live
-                // pixels to refract (transparent-glass pattern).
-                LiquidPinkBackdrop()
-
-                Group {
-                    if settings.hasSeenOnboarding {
-                        LocalAPIServerView()
-                            .transition(.opacity)
-                    } else {
-                        LASOnboardingView()
-                            .transition(.opacity)
-                    }
+            Group {
+                if settings.hasSeenOnboarding {
+                    Sand2HomeView()
+                        .transition(.opacity)
+                } else {
+                    Sand2OnboardingView()
+                        .transition(.opacity)
                 }
             }
-            .lasTheme()
+            .environment(\.layoutDirection, .rightToLeft)
+            .environment(\.locale, Locale(identifier: "ar_SA"))
         }
         .onChange(of: scenePhase) { _, newPhase in
             LASLifecycleController.shared.handle(newPhase)
@@ -37,8 +32,11 @@ final class LASAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        // Arabic (Saudi) first — before any UI mounts.
+        LocalizationService.shared.setLanguage(.arabic)
+        UserDefaults.standard.set("ar", forKey: "uiLanguage")
         CrashReporter.shared.install()
-        Diagnostics.shared.breadcrumb("On Device: LAS launch", category: "lifecycle")
+        Diagnostics.shared.breadcrumb("Sand2 launch", category: "lifecycle")
         return true
     }
 
@@ -63,12 +61,7 @@ final class LASAppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
-/// Lifecycle policy for the server-only product.
-///
-/// The listener is deliberately stopped when the app backgrounds. This keeps
-/// the local API opt-in and matches iOS's foreground execution boundary. Any
-/// resident model is drained before the process gives the system its memory
-/// back; the user can load the selected model again after returning.
+/// Lifecycle policy for the on-device product.
 @MainActor
 final class LASLifecycleController {
     static let shared = LASLifecycleController()
@@ -100,11 +93,6 @@ final class LASLifecycleController {
             }
             guard epoch == self.epoch else { return }
         case .background:
-            // Clear the crash marker before the first suspension point. iOS
-            // may suspend or terminate a backgrounded process while an
-            // awaited shutdown is still pending; leaving the foreground
-            // marker armed past that await misclassifies an ordinary
-            // background termination as a jetsam/watchdog crash next launch.
             CrashReporter.shared.markCleanShutdown()
             await LocalAPIManager.shared.stop()
             guard epoch == self.epoch else { return }
