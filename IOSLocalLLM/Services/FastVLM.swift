@@ -108,4 +108,105 @@ private enum Language {
             if let v = args.ropeScaling?["mrope_section"], let array = v.asInts() {
                 self.mropeSection = sequence(state: (0, array.makeIterator())) { state in
                     if let v = state.1.next() {
-     
+                        state.0 += v * 2
+                        return state.0
+                    } else {
+                        return nil
+                    }
+                }.dropLast()
+            } else {
+                // Fallback: default mrope_section for Qwen2-0.5B [2,1,1] → cumsum*2 = [4,6]
+                self.mropeSection = [4, 6]
+            }
+
+            self._rotaryEmbedding.wrappedValue = RoPE(
+                dimensions: headDim, traditional: args.ropeTraditional, base: args.ropeTheta)
+        }
+
+        func callAsFunction(_ x: MLXArray, mask: MLXArray? = nil, cache: (any KVCache)?) -> MLXArray {
+            let (B, L) = (x.dim(0), x.dim(1))
+
+            var queries = wq(x)
+            var keys = wk(x)
+            var values = wv(x)
+
+            queries = queries.reshaped(B, L, heads, headDim).transposed(0, 2, 1, 3)
+            keys = keys.reshaped(B, L, kvHeads, headDim).transposed(0, 2, 1, 3)
+            values = values.reshaped(B, L, kvHeads, headDim).transposed(0, 2, 1, 3)
+
+            let offset = cache?.offset ?? 0
+            let mask = mask?[0..., 0 ..< keys.dim(-2)]
+
+            queries = rotaryEmbedding(queries, offset: offset)
+            keys = rotaryEmbedding(keys, offset: offset)
+
+            if let cache {
+                (keys, values) = cache.update(keys: keys, values: values)
+            }
+
+            let attnOut = MLXFast.scaledDotProductAttention(
+                queries: queries, keys: keys, values: values, scale: scale, mask: mask
+            )
+            .transposed(0, 2, 1, 3)
+            .reshaped(B, L, -1)
+            return wo(attnOut)
+        }
+    }
+
+    fileprivate class MLP: Module, UnaryLayer {
+
+        @ModuleInfo(key: "gate_proj") var gate: Linear
+        @ModuleInfo(key: "down_proj") var down: Linear
+        @ModuleInfo(key: "up_proj") var up: Linear
+
+        init(dimensions: Int, hiddenDimensions: Int) {
+            self._gate.wrappedValue = Linear(dimensions, hiddenDimensions, bias: false)
+            self._down.wrappedValue = Linear(hiddenDimensions, dimensions, bias: false)
+            self._up.wrappedValue = Linear(dimensions, hiddenDimensions, bias: false)
+        }
+
+        func callAsFunction(_ x: MLXArray) -> MLXArray {
+            down(silu(gate(x)) * up(x))
+        }
+    }
+
+    fileprivate class DecoderLayer: Module {
+
+        @ModuleInfo(key: "self_attn") var attention: Attention
+        let mlp: MLP
+
+        @ModuleInfo(key: "input_layernorm") var inputLayerNorm: RMSNorm
+        @ModuleInfo(key: "post_attention_layernorm") var postAttentionLayerNorm: RMSNorm
+
+        init(_ args: FastVLMConfiguration.TextConfiguration) {
+            self._attention.wrappedValue = Attention(args)
+            self.mlp = MLP(dimensions: args.hiddenSize, hiddenDimensions: args.intermediateSize)
+            self._inputLayerNorm.wrappedValue = RMSNorm(
+                dimensions: args.hiddenSize, eps: args.rmsNormEps)
+            self._postAttentionLayerNorm.wrappedValue = RMSNorm(
+                dimensions: args.hiddenSize, eps: args.rmsNormEps)
+        }
+
+        func callAsFunction(_ x: MLXArray, mask: MLXArray? = nil, cache: (any KVCache)?) -> MLXArray {
+            let r = attention(inputLayerNorm(x), mask: mask, cache: cache)
+            let h = x + r
+            return h + mlp(postAttentionLayerNorm(h))
+        }
+    }
+
+    fileprivate class Qwen2Model: Module {
+
+        @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
+        fileprivate let layers: [DecoderLayer]
+        fileprivate let norm: RMSNorm
+
+        init(_ args: FastVLMConfiguration.TextConfiguration) {
+            precondition(args.vocabularySize > 0)
+            self._embedTokens.wrappedValue = Embedding(
+                embeddingCount: args.vocabularySize, dimensions: args.hiddenSize)
+            self.layers = (0 ..< args.hiddenLayers).map { _ in DecoderLayer(args) }
+            self.norm = RMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
+        }
+
+        func callAsFunction(
+        
