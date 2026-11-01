@@ -1,0 +1,174 @@
+name: Build IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/build-ipa.yml
+      - scripts/package_unsigned_ipa.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sand2-build-ipa
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    name: Build Sand2 IPA
+    runs-on: macos-15
+    timeout-minutes: 360
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+      SCHEME: OnDeviceLAS
+      WORKSPACE: OnDeviceLAS.xcworkspace
+      ARCHIVE_PATH: ${{ github.workspace }}/build/Sand2.xcarchive
+      IPA_PATH: ${{ github.workspace }}/build/Sand2.ipa
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Select newest Xcode
+        run: |
+          set -euo pipefail
+          echo "==> Available Xcode apps"
+          ls /Applications | grep -i xcode || true
+          selected=""
+          for candidate in \
+            /Applications/Xcode_26*.app \
+            /Applications/Xcode-26*.app \
+            /Applications/Xcode_16*.app \
+            /Applications/Xcode.app
+          do
+            if [[ -d "$candidate" ]]; then
+              selected="$candidate"
+            fi
+          done
+          if [[ -z "$selected" ]]; then
+            selected="$(mdfind 'kMDItemCFBundleIdentifier == com.apple.dt.Xcode' 2>/dev/null | head -1 || true)"
+          fi
+          if [[ -z "$selected" || ! -d "$selected" ]]; then
+            echo "error: no Xcode installation found" >&2
+            exit 1
+          fi
+          echo "Using Xcode at $selected"
+          sudo xcode-select -s "$selected"
+          xcodebuild -version
+          xcodebuild -showsdks | sed -n '1,80p'
+
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          df -h .
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /opt/hostedtoolcache/CodeQL \
+            /opt/hostedtoolcache/go \
+            /opt/hostedtoolcache/Python \
+            || true
+          xcrun simctl delete unavailable || true
+          df -h .
+
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          brew install cmake xcodegen cocoapods || brew upgrade cmake xcodegen cocoapods || true
+          cmake --version
+          xcodegen --version
+          pod --version
+
+      - name: Build native llama.cpp XCFramework
+        run: |
+          set -euo pipefail
+          ./scripts/build_native_frameworks.sh
+          ls -la ThirdParty/llama.cpp/build-apple/
+          test -d ThirdParty/llama.cpp/build-apple/llama.xcframework
+
+      - name: Generate Xcode project and CocoaPods workspace
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          pod install --verbose
+          test -d OnDeviceLAS.xcworkspace
+          xcodebuild -list -workspace OnDeviceLAS.xcworkspace
+
+      - name: Resolve Swift packages
+        run: |
+          set -euo pipefail
+          xcodebuild -resolvePackageDependencies \
+            -workspace OnDeviceLAS.xcworkspace \
+            -scheme OnDeviceLAS
+
+      - name: Archive (unsigned / ad-hoc)
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          set +e
+          xcodebuild archive \
+            -workspace OnDeviceLAS.xcworkspace \
+            -scheme OnDeviceLAS \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$ARCHIVE_PATH" \
+            -derivedDataPath "$GITHUB_WORKSPACE/DerivedData" \
+            DEVELOPMENT_TEAM="" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_REQUIRED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            ONLY_ACTIVE_ARCH=NO \
+            | tee build/xcodebuild-archive.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [[ $status -ne 0 ]]; then
+            echo "==> Archive failed; retrying with CODE_SIGNING_ALLOWED=NO"
+            xcodebuild archive \
+              -workspace OnDeviceLAS.xcworkspace \
+              -scheme OnDeviceLAS \
+              -configuration Release \
+              -destination 'generic/platform=iOS' \
+              -archivePath "$ARCHIVE_PATH" \
+              -derivedDataPath "$GITHUB_WORKSPACE/DerivedData" \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY="" \
+              ONLY_ACTIVE_ARCH=NO \
+              | tee -a build/xcodebuild-archive.log
+          fi
+          test -d "$ARCHIVE_PATH"
+          find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name '*.app'
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/package_unsigned_ipa.sh
+          ./scripts/package_unsigned_ipa.sh "$ARCHIVE_PATH" "$IPA_PATH"
+          ls -lh "$IPA_PATH"
+          unzip -l "$IPA_PATH" | head -40
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sand2-ipa
+          path: |
+            build/Sand2.ipa
+            build/xcodebuild-archive.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload archive log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sand2-ipa-failure-logs
+          path: |
+            build/**
+            DerivedData/Logs/**
+          if-no-files-found: ignore
+          retention-days: 7
