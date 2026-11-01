@@ -1,1 +1,1 @@
-PLACEHOLDER_WILL_REPLACE
+@file:/tmp/gh_create_args.json
