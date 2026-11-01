@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/build-ipa.yml
       - scripts/package_unsigned_ipa.sh
+      - IOSLocalLLM/Services/FastVLM.swift
 
 permissions:
   contents: read
@@ -17,10 +18,9 @@ concurrency:
 jobs:
   ipa:
     name: Build Sand2 IPA
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 360
     env:
-      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
       SCHEME: OnDeviceLAS
       WORKSPACE: OnDeviceLAS.xcworkspace
       ARCHIVE_PATH: ${{ github.workspace }}/build/Sand2.xcarchive
@@ -33,33 +33,32 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Select newest Xcode
+      - name: Select Xcode 26
         run: |
           set -euo pipefail
           echo "==> Available Xcode apps"
           ls /Applications | grep -i xcode || true
           selected=""
           for candidate in \
+            /Applications/Xcode_26.6.app \
+            /Applications/Xcode_26.5.app \
+            /Applications/Xcode_26.4.1.app \
             /Applications/Xcode_26*.app \
-            /Applications/Xcode-26*.app \
-            /Applications/Xcode_16*.app \
             /Applications/Xcode.app
           do
             if [[ -d "$candidate" ]]; then
               selected="$candidate"
+              break
             fi
           done
-          if [[ -z "$selected" ]]; then
-            selected="$(mdfind 'kMDItemCFBundleIdentifier == com.apple.dt.Xcode' 2>/dev/null | head -1 || true)"
-          fi
           if [[ -z "$selected" || ! -d "$selected" ]]; then
-            echo "error: no Xcode installation found" >&2
+            echo "error: no Xcode 26 installation found" >&2
             exit 1
           fi
           echo "Using Xcode at $selected"
           sudo xcode-select -s "$selected"
           xcodebuild -version
-          xcodebuild -showsdks | sed -n '1,80p'
+          xcodebuild -showsdks | sed -n '1,120p'
 
       - name: Free disk space
         run: |
@@ -82,12 +81,29 @@ jobs:
           xcodegen --version
           pod --version
 
+      - name: Cache native XCFrameworks
+        id: cache-native
+        uses: actions/cache@v4
+        with:
+          path: |
+            ThirdParty/llama.cpp/build-apple/llama.xcframework
+            ThirdParty/whisper.cpp/build-apple/whisper.xcframework
+          key: native-fw-${{ runner.os }}-${{ hashFiles('ThirdParty/llama.cpp/.git', 'ThirdParty/whisper.cpp/.git', 'Patches/**', 'scripts/build_native_frameworks.sh', 'scripts/native/**') }}
+
       - name: Build native llama.cpp XCFramework
+        if: steps.cache-native.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           ./scripts/build_native_frameworks.sh
           ls -la ThirdParty/llama.cpp/build-apple/
           test -d ThirdParty/llama.cpp/build-apple/llama.xcframework
+
+      - name: Verify native frameworks
+        run: |
+          set -euo pipefail
+          git submodule update --init --recursive
+          test -d ThirdParty/llama.cpp/build-apple/llama.xcframework
+          ls -la ThirdParty/llama.cpp/build-apple/llama.xcframework
 
       - name: Generate Xcode project and CocoaPods workspace
         run: |
