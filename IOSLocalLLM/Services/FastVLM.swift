@@ -1,1 +1,1 @@
-@file:/tmp/FastVLM.patched.swift
+LOAD_FROM_FILE
