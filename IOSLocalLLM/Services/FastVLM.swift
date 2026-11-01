@@ -1,1 +1,1 @@
-@file:/tmp/FastVLM.patched.swift
+{{FILE:/tmp/FastVLM.patched.swift}}
