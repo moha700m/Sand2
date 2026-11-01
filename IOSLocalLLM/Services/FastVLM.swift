@@ -1,1 +1,1 @@
-PLACEHOLDER_WILL_REPLACE
+file:///tmp/FastVLM.patched.swift
