@@ -1,1 +1,1 @@
-FULL_CONTENT_PLACEHOLDER
+@localfile:/tmp/FastVLM.patched.swift
